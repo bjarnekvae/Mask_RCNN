@@ -550,12 +550,12 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     # Positive ROIs
     positive_count = int(config.TRAIN_ROIS_PER_IMAGE *
                          config.ROI_POSITIVE_RATIO)
-    positive_indices = tf.random.shuffle(positive_indices)[:positive_count]
+    positive_indices = tf.random_shuffle(positive_indices)[:positive_count]
     positive_count = tf.shape(positive_indices)[0]
     # Negative ROIs. Add enough to maintain positive:negative ratio.
     r = 1.0 / config.ROI_POSITIVE_RATIO
     negative_count = tf.cast(r * tf.cast(positive_count, tf.float32), tf.int32) - positive_count
-    negative_indices = tf.random.shuffle(negative_indices)[:negative_count]
+    negative_indices = tf.random_shuffle(negative_indices)[:negative_count]
     # Gather selected ROIs
     positive_rois = tf.gather(proposals, positive_indices)
     negative_rois = tf.gather(proposals, negative_indices)
@@ -806,6 +806,7 @@ class DetectionLayer(KE.Layer):
         image_shape = m['image_shape'][0]
         window = norm_boxes_graph(m['window'], image_shape[:2])
 
+        print("******************************* ", self.config)
         # Run detection refinement graph on each item in the batch
         detections_batch = utils.batch_slice(
             [rois, mrcnn_class, mrcnn_bbox, window],
@@ -1000,13 +1001,6 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
 
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
                            name="mrcnn_mask_deconv")(x)
-
-    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
-                           name="mrcnn_mask_deconv2")(x)
-
-    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
-                           name="mrcnn_mask_deconv3")(x)
-
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
                            name="mrcnn_mask")(x)
     return x
@@ -2174,21 +2168,12 @@ class MaskRCNN():
             "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
         for name in loss_names:
             layer = self.keras_model.get_layer(name)
-            # print("AAAAAAAAA ", layer.output in self.keras_model.losses)
-            # print("AAAAAAAAAA ", tf.constant(layer.output in self.keras_model.losses))
-            # print(str(self.keras_model.losses))
-            # print(str(layer.output))
-            # print("AAAAAAAAAAAA ", str(layer.output) in str(self.keras_model.losses))
-            loss = tf.reduce_mean(layer.output, keepdims=True) * self.config.LOSS_WEIGHTS.get(name, 1.)
+            if layer.output in self.keras_model.losses:
+                continue
+            loss = (
+                tf.reduce_mean(layer.output, keepdims=True)
+                * self.config.LOSS_WEIGHTS.get(name, 1.))
             self.keras_model.add_loss(loss)
-            # tf.cond(tf.constant(layer.output in self.keras_model.losses), lambda: 1, lambda: self.keras_model.add_loss(tf.reduce_mean(layer.output, keepdims=True) * self.config.LOSS_WEIGHTS.get(name, 1.)))
-            # tf.cond(tf.constant(layer.output in self.keras_model.losses), lambda: 1, lambda: self.keras_model.add_loss(tf.reduce_mean(layer.output, keepdims=True) * self.config.LOSS_WEIGHTS.get(name, 1.)))
-            #if layer.output in self.keras_model.losses:
-            #    continue
-            #loss = (
-            #    tf.reduce_mean(layer.output, keepdims=True)
-            #    * self.config.LOSS_WEIGHTS.get(name, 1.))
-            # self.keras_model.add_loss(loss)
 
         # Add L2 Regularization
         # Skip gamma and beta weights of batch normalization layers.
@@ -2530,11 +2515,17 @@ class MaskRCNN():
         # Duplicate across the batch dimension because Keras requires it
         # TODO: can this be optimized to avoid duplicating the anchors?
         anchors = np.broadcast_to(anchors, (self.config.BATCH_SIZE,) + anchors.shape)
+        # print("PPPPPPPPPPPP ", image_metas)
+        # print("QQQQQQQQQ ", anchors)
+        # np.save("image_metas.npy", image_metas)
+        # np.save("anchors.npy", anchors)
+        # np.save("molded_images.npy", molded_images)
 
         if verbose:
             log("molded_images", molded_images)
             log("image_metas", image_metas)
             log("anchors", anchors)
+
         # Run object detection
         detections, _, _, mrcnn_mask, _, _, _ =\
             self.keras_model.predict([molded_images, image_metas, anchors], verbose=0)

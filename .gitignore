@@ -56,3 +56,11 @@ pip-delete-this-directory.txt
 .venv
 venv/
 ENV/
+.py372_alt_venv
+.venv
+
+# videos
+*.mkv
+
+#kaggle .npz datasets
+*.npz
